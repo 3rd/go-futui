@@ -5,10 +5,9 @@ type IComponent interface {
 }
 
 type Component struct {
-	IComponent
 	Style Style
 }
 
-func (*Component) Render(*Buffer) {
+func (*Component) Render() Buffer {
 	panic("Component does not implement the render function.")
 }
