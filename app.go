@@ -11,7 +11,7 @@ type IAppWithSetup interface {
 	Setup()
 }
 type IAppWithKeypressHandler interface {
-	OnKeypress(key tcell.Key, r rune)
+	OnKeypress(event tcell.EventKey)
 }
 type IAppWithResizeHandler interface {
 	OnResize(w, h int)
@@ -128,7 +128,7 @@ func (app *App) Run(userApp IApp) {
 
 	if userAppWithKeypressHandler, ok := userApp.(IAppWithKeypressHandler); ok {
 		keypressHandler := func(ev tcell.EventKey) {
-			userAppWithKeypressHandler.OnKeypress(ev.Key(), ev.Rune())
+			userAppWithKeypressHandler.OnKeypress(ev)
 		}
 		app.handlers.keypress = &keypressHandler
 	}
