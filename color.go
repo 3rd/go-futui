@@ -13,7 +13,7 @@ func (c Color) Build() *tcell.Color {
 	}
 	color := noire.NewHex(string(c))
 	r, g, b := color.RGB()
-	tcellColor := tcell.NewRGBColor(int32(r), int32(g), int32(b))
+	tcellColor := tcell.NewRGBColor(int32(r), int32(g), int32(b)).TrueColor()
 	return &tcellColor
 }
 

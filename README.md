@@ -90,3 +90,38 @@ func main() {
 	app.Run(&app)
 }
 ```
+
+## Inline (scrollback) mode
+
+By default, go-futui renders in a full-screen TUI. To preserve terminal history and only
+rewrite the last lines your app rendered, run in inline mode:
+
+```go
+func main() {
+	app := MyApp{}
+	app.RunWithOptions(&app, ui.RunOptions{
+		Mode: ui.RunModeInline,
+	})
+}
+```
+
+If `TERM` isn't recognized, inline mode falls back to `xterm-256color`/`xterm` terminfo
+for input handling. Set `TERM` correctly for best results.
+
+Inline mode trims trailing empty lines (no content or styling) so apps that resize
+their buffer to full height don’t accidentally rewrite the whole screen.
+
+Inline mode tips:
+- Avoid `Resize(app.Width(), app.Height())` unless you really want full-screen updates.
+- If you apply `FillStyle` across the whole buffer, those lines are treated as content
+  and will be rewritten (by design).
+- Inline mode hides the cursor while running and restores it on exit.
+
+To cap inline output to the last N lines, use `InlineMaxHeight`:
+
+```go
+app.RunWithOptions(&app, ui.RunOptions{
+	Mode:            ui.RunModeInline,
+	InlineMaxHeight: 5,
+})
+```

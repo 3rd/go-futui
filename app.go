@@ -1,7 +1,10 @@
 package futui
 
 import (
+	"os"
+
 	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v2/terminfo"
 )
 
 type IApp interface {
@@ -17,6 +20,18 @@ type IAppWithResizeHandler interface {
 	OnResize(w, h int)
 }
 
+type RunMode int
+
+const (
+	RunModeScreen RunMode = iota
+	RunModeInline
+)
+
+type RunOptions struct {
+	Mode            RunMode
+	InlineMaxHeight int
+}
+
 type Handlers struct {
 	render   func() Buffer
 	setup    *func()
@@ -28,6 +43,8 @@ type App struct {
 	handlers    Handlers
 	Screen      tcell.Screen
 	QuitChannel chan struct{}
+	mode        RunMode
+	inline      *inlineRenderer
 }
 
 func (app *App) render() {
@@ -36,6 +53,13 @@ func (app *App) render() {
 		panic("app.handlers.render is nil")
 	}
 	buff := app.handlers.render()
+
+	if app.mode == RunModeInline && app.inline != nil {
+		if err := app.inline.Render(buff); err != nil {
+			panic(err)
+		}
+		return
+	}
 
 	// proxy
 	width, height := buff.Size()
@@ -67,7 +91,9 @@ func (app *App) loop() {
 			if app.handlers.resize != nil {
 				width, height := app.Screen.Size()
 				(*app.handlers.resize)(width, height)
-				app.Screen.Sync()
+				if app.mode == RunModeScreen {
+					app.Screen.Sync()
+				}
 			}
 		}
 	}
@@ -79,6 +105,9 @@ func (app *App) Update() {
 
 func (app *App) Quit() {
 	app.Screen.Fini()
+	if app.mode == RunModeInline {
+		writeANSI(os.Stdout, ansiShowCursor)
+	}
 	close(app.QuitChannel)
 }
 
@@ -103,11 +132,21 @@ func (app *App) Height() int {
 }
 
 func (app *App) Clear() {
+	if app.mode == RunModeInline && app.inline != nil {
+		if err := app.inline.Clear(); err != nil {
+			panic(err)
+		}
+		return
+	}
 	app.Screen.Clear()
 	app.Screen.Show()
 }
 
 func (app *App) Sync() {
+	if app.mode == RunModeInline {
+		app.render()
+		return
+	}
 	app.Screen.Sync()
 }
 
@@ -116,6 +155,10 @@ func (app *App) Beep() {
 }
 
 func (app *App) Run(userApp IApp) {
+	app.RunWithOptions(userApp, RunOptions{})
+}
+
+func (app *App) RunWithOptions(userApp IApp, opts RunOptions) {
 	// setup handlers
 	app.handlers.render = userApp.Render
 
@@ -139,21 +182,47 @@ func (app *App) Run(userApp IApp) {
 		app.handlers.resize = &resizeHandler
 	}
 
+	mode := RunModeScreen
+	if opts.Mode == RunModeInline {
+		mode = RunModeInline
+	}
+
 	// setup screen
 	tcell.SetEncodingFallback(tcell.EncodingFallbackASCII)
-	screen, err := tcell.NewScreen()
+	var (
+		screen tcell.Screen
+		err    error
+	)
+	if mode == RunModeInline {
+		writeANSI(os.Stdout, ansiSaveCursor)
+		screen, err = newInlineScreen()
+	} else {
+		screen, err = tcell.NewScreen()
+	}
 	if err != nil {
 		panic("Cannot create screen.")
 	}
 	if err = screen.Init(); err != nil {
 		panic("Cannot initialize screen.")
 	}
+	if mode == RunModeInline {
+		writeANSI(os.Stdout, ansiRestore)
+		writeANSI(os.Stdout, ansiHideCursor)
+	}
 	screen.SetStyle(tcell.StyleDefault)
-	screen.Clear()
+	if mode == RunModeScreen {
+		screen.Clear()
+	}
 
 	// internal state
 	app.Screen = screen
 	app.QuitChannel = make(chan struct{})
+	app.mode = mode
+	if mode == RunModeInline {
+		app.inline = newInlineRenderer(os.Stdout, opts.InlineMaxHeight)
+	} else {
+		app.inline = nil
+	}
 
 	if app.handlers.setup != nil {
 		(*app.handlers.setup)()
@@ -163,4 +232,35 @@ func (app *App) Run(userApp IApp) {
 	app.render()
 	go app.loop()
 	app.WaitForExit()
+}
+
+func newInlineScreen() (tcell.Screen, error) {
+	tty, err := tcell.NewStdIoTty()
+	if err != nil {
+		return nil, err
+	}
+
+	term := os.Getenv("TERM")
+	candidates := []string{}
+	if term != "" {
+		candidates = append(candidates, term)
+	}
+	candidates = append(candidates, "xterm-256color", "xterm")
+
+	for _, name := range candidates {
+		ti, err := terminfo.LookupTerminfo(name)
+		if err != nil || ti == nil {
+			continue
+		}
+		clone := *ti
+		clone.EnterCA = ""
+		clone.ExitCA = ""
+		clone.Clear = ""
+		return tcell.NewTerminfoScreenFromTtyTerminfo(tty, &clone)
+	}
+
+	if err == nil {
+		err = terminfo.ErrTermNotFound
+	}
+	return nil, err
 }
